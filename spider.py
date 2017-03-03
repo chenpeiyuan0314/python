@@ -6,78 +6,85 @@ class Spider:
 
   # 初始化
   def __init__(self):
+    # 列表页地址
     self.url = "http://mm.taobao.com/json/request_top_list.htm";
-    self.tool = Tool();
+    # 相册页地址
+    self.url2 = "https://mm.taobao.com/album/json/get_album_photo_list.htm";
+    # 获取失败列表
+    self.failList = [];
 
-  # 获取页面
-  def getPage(self, index):
-    url = self.url + "?page=" + str(index);
+  # 获取数据
+  def getData(self, url):
     response = urllib.request.urlopen(url);
-    return response.read();
+    return response.read().decode("GBK");
 
-  # 获取内容
-  def getContent(self, index):
-    page = self.getPage(index);
-    pattern = re.compile('<div class="list-item".*?<a class="lady-name.*?>(.*?)</a>.*?<div class="pic w610".*?<a href="(.*?)"',re.S);
-    items = re.findall(pattern, page.decode('gbk'));
-    content = [];
+  # 获取美女列表
+  def getBeautyList(self, index):
+    html = self.getData(self.url + "?page=" + str(index));
+    pattern = re.compile('<div class="list-item".*?<a class="lady-name.*?>(.*?)</a>.*?<div class="pic w610".*?<a href=".*?-(.*?)-(.*?)\.htm.*?"',re.S);
+    items = re.findall(pattern, html);
+    list = [];
     for item in items:
-      content.append({"name":item[0],"url":item[1]});
-    return content;  
+      url = self.url2 + "?user_id=" + item[1] +"&album_id=" + item[2];
+      list.append({"name":item[0],"url":url});
+    return list;  
 
-  # 获取详情
+  # 获取图片列表 
+  """
+  def getImageList(self, html):
+    pattern = re.compile('"picUrl".*?"(.*?)"', re.S);
+    items = re.findall(pattern, html);
+    list = [];
+    for item in items:
+      # 获取清晰大图地址
+      item = re.sub(re.compile('_290x10000\.jpg$'),"",item)
+      list.append("https:" + item);
+    return list;
+  """
+  def getImageList(self, url):
+    # 获取总页数
+    html = self.getData(url);
+    pattern = re.compile('"totalPage".*?"(.*?)"', re.S);
+    total = re.search(pattern, html);
+    total = int(total.group(1));
+    
+    list = [];
+    index = 1;
+    pattern = re.compile('"picUrl".*?"(.*?)"', re.S);
+    while index <= total:
+      html = self.getData(url + "&page=" + str(index));
+      items = re.findall(pattern, html);
+      for item in items:
+        # 获取清晰大图地址
+        item = re.sub(re.compile('_290x10000\.jpg$'),"",item)
+        list.append("https:" + item);
+      index += 1;  
+    return list;
 
-  # 获取简介
-  def getBrief(self, page):
-    pattern = re.compile('<div class="mm-aixiu-content".*?>(.*?)<!--',re.S);
-    result = re.search(pattern, page.decode("gbk"));
-    return self.tool.replace(result.group(1));
-
-  # 获取图片
-  def getImages(self, html):
-    pattern = re.compile('<div class="mm-p-img-area".*?>(.*?)<!--',re.S);
-    content = re.search(pattern, html.decode('gbk'));
-    #print(html);
-    print(content);
-    pattern = re.compile('<img.*?src="(.*?)"', re.S);
-    images = re.findall(pattern, content.group(1));
-    return images;
-
-  # 保存图片
+  # 保存多张图片
   def saveImages(self, images, name):
     number = 1;
-    #print("发现{0}共有{1}张图片".format(name,len(images)));
     for image in images:
       splitPath = image.split(".")
       tail = splitPath.pop();
       if len(tail) > 3:
         tail = "jpg";
       file = name + "/" + str(number) + "." + tail;   
-      self.saveImage(url, file);
+      self.saveImage(image, file);
       number += 1;
 
-  # 保存头像
-  def saveIcon(self, icon, name):
-    splitPath = icon.split(".")
-    tail = splitPath.pop();
-    file = name + "/icon." + tail;   
-    self.saveImage(url, name);
-
-
-  # 保存简介
-  def saveBrief(self, content, name):
-    file = name + "/" + name + ".txt";
-    f = open(file, "w+");
-    f.write(content.encode("UTF8"));
-    f.close();
-
-  # 保存图片
+  # 保存单张图片
   def saveImage(self, url, name):
-    u = urllib.request.urlopen(url);
-    data = u.read();
-    f = open(name, "wb");
-    f.write(data);
-    f.close();
+    #print(url);
+    try:
+      u = urllib.request.urlopen(url);
+      data = u.read();
+      f = open(name, "wb");
+      f.write(data);
+      f.close();
+    except:
+      print("save image except: " + url);
+      self.failList.append([url, name]);
 
   # 创建目录
   def mkdir(self, path):
@@ -91,40 +98,23 @@ class Spider:
 
   # 保存单张页面
   def savePage(self, index):
-    content = self.getContent(index);
-    for item in content:
-      print(item["url"]);
-      page = self.getPage(item["url"]);
-      #brief = self.getBrief(page);
-      #print(page);
-      images = self.getImages(page);
+    list = self.getBeautyList(index);
+    for item in list:
+      #html = self.getData(item["url"]);
+      images = self.getImageList(item["url"]);
       self.mkdir(item["name"]);
-      #self.saveBrief(brief, item[2]);
-      #self.saveIcon(item[1], item[2]);
       self.saveImages(images, item["name"]);
+
+    # 继续下载失败图片
+    list = self.failList;
+    while len(list) > 0:
+      item = list.pop();
+      self.saveImage(item[0], item[1]);
 
   # 保存多张页面
   def savePages(self, start, end):
     for i in range(start, end + 1):
       self.savePage(i);
 
-class Tool:
-  removeImg = re.compile("<img.*?>| {1,7}| ");
-  removeAddr = re.compile("<a.*?>|</a>");
-  replaceLine = re.compile("<tr>|<div>|</div>|</p>");
-  replaceTD = re.compile("<td>");
-  replaceBR = re.compile("<br><br>|<br>");
-  removeExtraTag = re.compile("<.*?>");
-  removeNoneLine = re.compile("\n+");
-  def replace(self, x):
-    x = re.sub(self.removeImg, "", x);
-    x = re.sub(self.removeAddr, "", x);
-    x = re.sub(self.removeLine, "", x);
-    x = re.sub(self.removeTD, "", x);
-    x = re.sub(self.removeBR, "", x);
-    x = re.sub(self.removeExtraTag, "", x);
-    x = re.sub(self.removeNoneLine, "", x);
-    return x.strip();
-
 spider = Spider();
-spider.savePages(2, 10);
+spider.savePage(1);
